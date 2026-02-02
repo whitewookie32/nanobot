@@ -21,10 +21,13 @@ class LiteLLMProvider(LLMProvider):
         self, 
         api_key: str | None = None, 
         api_base: str | None = None,
-        default_model: str = "anthropic/claude-opus-4-5"
+        default_model: str = "anthropic/claude-opus-4-5",
+        litellm_settings: Any | None = None,
     ):
         super().__init__(api_key, api_base)
         self.default_model = default_model
+        self.allowed_openai_params: list[str] = []
+        self.drop_params: bool | None = None
         
         # Detect OpenRouter by api_key prefix or explicit api_base
         self.is_openrouter = (
@@ -40,6 +43,24 @@ class LiteLLMProvider(LLMProvider):
         
         # Track if using custom endpoint (vLLM, etc.)
         self.is_vllm = bool(api_base) and not self.is_openrouter and not self.is_together
+
+        # Load LiteLLM settings (optional)
+        def _get_setting(name: str, default: Any) -> Any:
+            if litellm_settings is None:
+                return default
+            if isinstance(litellm_settings, dict):
+                return litellm_settings.get(name, default)
+            return getattr(litellm_settings, name, default)
+
+        allowed_params = _get_setting("allowed_openai_params", None)
+        if isinstance(allowed_params, str):
+            self.allowed_openai_params = [allowed_params]
+        elif allowed_params:
+            self.allowed_openai_params = list(allowed_params)
+
+        drop_params_setting = _get_setting("drop_params", None)
+        if drop_params_setting is not None:
+            self.drop_params = bool(drop_params_setting)
         
         # Configure LiteLLM based on provider
         if api_key:
@@ -67,6 +88,16 @@ class LiteLLMProvider(LLMProvider):
         
         # Disable LiteLLM logging noise
         litellm.suppress_debug_info = True
+
+        # Configure LiteLLM param handling
+        if self.drop_params is not None:
+            litellm.drop_params = self.drop_params
+        elif self.allowed_openai_params:
+            # Ensure allowed params aren't stripped by a previous global drop_params setting.
+            litellm.drop_params = False
+        elif self.is_together:
+            # Together AI rejects tool params for many models; drop unless explicitly allowed.
+            litellm.drop_params = True
     
     async def chat(
         self,
@@ -143,6 +174,8 @@ class LiteLLMProvider(LLMProvider):
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
+        if self.allowed_openai_params:
+            kwargs["allowed_openai_params"] = self.allowed_openai_params
         
         try:
             response = await acompletion(**kwargs)
