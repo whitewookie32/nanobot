@@ -6,7 +6,7 @@ if [[ "${NANOBOT_SKIP_INSTALL:-}" != "1" ]]; then
   install_needed=0
   if [[ "${NANOBOT_FORCE_INSTALL:-}" == "1" ]]; then
     install_needed=1
-  elif ! command -v nanobot >/dev/null 2>&1; then
+  elif ! python -m pip show nanobot-ai >/dev/null 2>&1; then
     install_needed=1
   fi
 
@@ -98,4 +98,4 @@ if [[ "${NANOBOT_VERBOSE:-}" == "1" ]]; then
   GATEWAY_ARGS+=(--verbose)
 fi
 
-exec nanobot gateway "${GATEWAY_ARGS[@]}"
+exec python -m nanobot gateway "${GATEWAY_ARGS[@]}"
