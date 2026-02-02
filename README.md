@@ -199,6 +199,15 @@ Railway can build from the included `Dockerfile` and uses `railway.json` to forc
 
 Railway injects `PORT`, and the gateway binds to it automatically. Health checks respond on `/health`.
 
+## Web UI (Settings)
+
+The gateway exposes a lightweight web UI for configuring keys and basic settings.
+
+- Open `http://<host>:<port>/` to view and update settings.
+- After saving, restart the service to apply changes.
+- If `NANOBOT_WRITE_CONFIG=1`, your changes will be overwritten on restart. Set it to `0` after the first save.
+- Disable the UI with `NANOBOT_HTTP_ENABLED=0`.
+
 ## 💬 Chat Apps
 
 Talk to your nanobot through Telegram or WhatsApp — anytime, anywhere.

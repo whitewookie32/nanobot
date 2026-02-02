@@ -158,11 +158,13 @@ def gateway(
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
 ):
     """Start the nanobot gateway."""
+    import html
     import os
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
     from threading import Thread
+    from urllib.parse import parse_qs, urlparse
 
-    from nanobot.config.loader import load_config, get_data_dir
+    from nanobot.config.loader import load_config, save_config, get_config_path, get_data_dir
     from nanobot.bus.queue import MessageBus
     from nanobot.providers.litellm_provider import LiteLLMProvider
     from nanobot.agent.loop import AgentLoop
@@ -179,39 +181,288 @@ def gateway(
 
     config = load_config()
 
-    def start_health_server(host: str, health_port: int) -> ThreadingHTTPServer | None:
-        class HealthHandler(BaseHTTPRequestHandler):
+    def _escape(value: str) -> str:
+        return html.escape(value or "")
+
+    def _is_true(value: str | None) -> bool:
+        return (value or "").lower() in {"1", "true", "yes", "on"}
+
+    def _get_field(fields: dict[str, list[str]], name: str) -> str:
+        return (fields.get(name, [""])[0] or "").strip()
+
+    def _render_settings_page(saved: bool = False, error: str | None = None) -> str:
+        cfg = load_config()
+        cfg_path = get_config_path()
+        write_mode = os.getenv("NANOBOT_WRITE_CONFIG", "auto")
+
+        together_set = bool(cfg.providers.together.api_key)
+        openrouter_set = bool(cfg.providers.openrouter.api_key)
+        brave_set = bool(cfg.tools.web.search.api_key)
+        telegram_set = bool(cfg.channels.telegram.token)
+
+        allow_from = ", ".join(cfg.channels.telegram.allow_from)
+        notice = ""
+        if saved:
+            notice = "<div class='notice ok'>Saved. Restart the service to apply changes.</div>"
+        elif error:
+            notice = f"<div class='notice err'>Error: {_escape(error)}</div>"
+
+        write_note = ""
+        if _is_true(write_mode):
+            write_note = (
+                "<div class='notice warn'>NANOBOT_WRITE_CONFIG is enabled. "
+                "Config will be overwritten on restart. Set it to 0 after the first save.</div>"
+            )
+        priority_note = (
+            "<div class='notice warn'>Provider priority: OpenRouter > Together > Anthropic > OpenAI "
+            "> Gemini > Zhipu > vLLM.</div>"
+        )
+
+        return f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>nanobot Settings</title>
+    <style>
+      :root {{ color-scheme: light; }}
+      body {{ margin: 0; font-family: Arial, sans-serif; background: #f6f7fb; color: #111; }}
+      header {{ background: #0f172a; color: #fff; padding: 24px; }}
+      header h1 {{ margin: 0 0 8px 0; font-size: 22px; }}
+      header p {{ margin: 0; opacity: 0.9; }}
+      main {{ max-width: 900px; margin: 0 auto; padding: 24px; }}
+      .card {{ background: #fff; border: 1px solid #e6e8ef; border-radius: 12px; padding: 20px; margin-bottom: 16px; }}
+      .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }}
+      label {{ display: block; font-weight: 600; margin-bottom: 6px; }}
+      input[type="text"], input[type="password"] {{
+        width: 100%; padding: 10px 12px; border: 1px solid #d4d7e0; border-radius: 8px;
+      }}
+      .hint {{ font-size: 12px; color: #555; margin-top: 6px; }}
+      .notice {{ padding: 10px 12px; border-radius: 8px; margin-bottom: 12px; }}
+      .notice.ok {{ background: #ecfdf3; border: 1px solid #b7f3cf; color: #065f46; }}
+      .notice.err {{ background: #fff1f2; border: 1px solid #fecdd3; color: #9f1239; }}
+      .notice.warn {{ background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412; }}
+      .row {{ display: flex; gap: 12px; align-items: center; }}
+      .row input[type="checkbox"] {{ width: 18px; height: 18px; }}
+      button {{
+        background: #0f172a; color: #fff; border: 0; padding: 12px 18px;
+        border-radius: 8px; font-weight: 600; cursor: pointer;
+      }}
+      footer {{ font-size: 12px; color: #666; margin-top: 10px; }}
+      code {{ background: #f1f5f9; padding: 2px 6px; border-radius: 6px; }}
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>nanobot Settings</h1>
+      <p>Configure API keys, models, and chat channels.</p>
+    </header>
+    <main>
+      {notice}
+      {write_note}
+      {priority_note}
+      <div class="card">
+        <form method="post" action="/config">
+          <div class="grid">
+            <div>
+              <label for="model">Model</label>
+              <input id="model" name="model" type="text" value="{_escape(cfg.agents.defaults.model)}" />
+              <div class="hint">Example: meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo</div>
+            </div>
+            <div>
+              <label for="brave_api_key">Brave Search API Key</label>
+              <input id="brave_api_key" name="brave_api_key" type="password" placeholder="{('set' if brave_set else 'not set')}" />
+              <div class="hint">Leave blank to keep current value.</div>
+            </div>
+          </div>
+
+          <div class="card" style="margin-top:16px;">
+            <h3>Together AI</h3>
+            <div class="grid">
+              <div>
+                <label for="together_api_key">API Key</label>
+                <input id="together_api_key" name="together_api_key" type="password" placeholder="{('set' if together_set else 'not set')}" />
+                <div class="hint">Leave blank to keep current value.</div>
+              </div>
+              <div>
+                <label for="together_api_base">API Base (optional)</label>
+                <input id="together_api_base" name="together_api_base" type="text" value="{_escape(cfg.providers.together.api_base or '')}" />
+                <div class="hint">Default: https://api.together.xyz/v1</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>OpenRouter</h3>
+            <div class="grid">
+              <div>
+                <label for="openrouter_api_key">API Key</label>
+                <input id="openrouter_api_key" name="openrouter_api_key" type="password" placeholder="{('set' if openrouter_set else 'not set')}" />
+                <div class="hint">Leave blank to keep current value.</div>
+              </div>
+              <div>
+                <label for="openrouter_api_base">API Base (optional)</label>
+                <input id="openrouter_api_base" name="openrouter_api_base" type="text" value="{_escape(cfg.providers.openrouter.api_base or '')}" />
+                <div class="hint">Default: https://openrouter.ai/api/v1</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>Telegram</h3>
+            <div class="row">
+              <input id="telegram_enabled" name="telegram_enabled" type="checkbox" {'checked' if cfg.channels.telegram.enabled else ''} />
+              <label for="telegram_enabled">Enable Telegram</label>
+            </div>
+            <div class="grid" style="margin-top:12px;">
+              <div>
+                <label for="telegram_token">Bot Token</label>
+                <input id="telegram_token" name="telegram_token" type="password" placeholder="{('set' if telegram_set else 'not set')}" />
+                <div class="hint">Leave blank to keep current value.</div>
+              </div>
+              <div>
+                <label for="telegram_allow_from">Allowed Users (comma-separated)</label>
+                <input id="telegram_allow_from" name="telegram_allow_from" type="text" value="{_escape(allow_from)}" />
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>WhatsApp</h3>
+            <div class="row">
+              <input id="whatsapp_enabled" name="whatsapp_enabled" type="checkbox" {'checked' if cfg.channels.whatsapp.enabled else ''} />
+              <label for="whatsapp_enabled">Enable WhatsApp</label>
+            </div>
+          </div>
+
+          <button type="submit">Save Settings</button>
+          <footer>
+            Config path: <code>{_escape(str(cfg_path))}</code>
+          </footer>
+        </form>
+      </div>
+    </main>
+  </body>
+</html>
+"""
+
+    def _update_config(fields: dict[str, list[str]]) -> None:
+        cfg = load_config()
+
+        model = _get_field(fields, "model")
+        if model:
+            cfg.agents.defaults.model = model
+
+        brave_api_key = _get_field(fields, "brave_api_key")
+        if brave_api_key:
+            cfg.tools.web.search.api_key = brave_api_key
+
+        together_api_key = _get_field(fields, "together_api_key")
+        if together_api_key:
+            cfg.providers.together.api_key = together_api_key
+
+        together_api_base = _get_field(fields, "together_api_base")
+        cfg.providers.together.api_base = together_api_base or None
+
+        openrouter_api_key = _get_field(fields, "openrouter_api_key")
+        if openrouter_api_key:
+            cfg.providers.openrouter.api_key = openrouter_api_key
+
+        openrouter_api_base = _get_field(fields, "openrouter_api_base")
+        cfg.providers.openrouter.api_base = openrouter_api_base or None
+
+        telegram_enabled = "telegram_enabled" in fields
+        cfg.channels.telegram.enabled = telegram_enabled
+
+        telegram_token = _get_field(fields, "telegram_token")
+        if telegram_token:
+            cfg.channels.telegram.token = telegram_token
+
+        allow_from_raw = _get_field(fields, "telegram_allow_from")
+        cfg.channels.telegram.allow_from = [
+            item for item in (x.strip() for x in allow_from_raw.split(",")) if item
+        ]
+
+        whatsapp_enabled = "whatsapp_enabled" in fields
+        cfg.channels.whatsapp.enabled = whatsapp_enabled
+
+        save_config(cfg)
+
+    def start_web_server(host: str, web_port: int) -> ThreadingHTTPServer | None:
+        class WebHandler(BaseHTTPRequestHandler):
+            def _send_text(self, text: str, status: int = 200) -> None:
+                body = text.encode("utf-8")
+                self.send_response(status)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def _send_html(self, html_text: str, status: int = 200) -> None:
+                body = html_text.encode("utf-8")
+                self.send_response(status)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def _read_body(self) -> str:
+                length = int(self.headers.get("Content-Length", "0"))
+                if length <= 0:
+                    return ""
+                return self.rfile.read(length).decode("utf-8", errors="ignore")
+
             def do_GET(self) -> None:  # noqa: N802 - required by BaseHTTPRequestHandler
-                if self.path in ("/", "/health", "/healthz", "/ready"):
-                    body = b"ok"
-                    self.send_response(200)
-                    self.send_header("Content-Type", "text/plain; charset=utf-8")
-                    self.send_header("Content-Length", str(len(body)))
-                    self.end_headers()
-                    self.wfile.write(body)
-                else:
-                    self.send_response(404)
-                    self.end_headers()
+                path = urlparse(self.path).path
+                if path in ("/health", "/healthz", "/ready"):
+                    self._send_text("ok", 200)
+                    return
+                if path in ("/", "/ui"):
+                    query = parse_qs(urlparse(self.path).query)
+                    saved = "saved" in query
+                    error = query.get("error", [None])[0]
+                    self._send_html(_render_settings_page(saved=saved, error=error))
+                    return
+                self._send_text("not found", 404)
+
+            def do_POST(self) -> None:  # noqa: N802 - required by BaseHTTPRequestHandler
+                path = urlparse(self.path).path
+                if path in ("/config", "/"):
+                    try:
+                        body = self._read_body()
+                        fields = parse_qs(body, keep_blank_values=True)
+                        _update_config(fields)
+                        self.send_response(303)
+                        self.send_header("Location", "/?saved=1")
+                        self.end_headers()
+                    except Exception as exc:
+                        self._send_html(_render_settings_page(error=str(exc)), 400)
+                    return
+                self._send_text("not found", 404)
 
             def log_message(self, format: str, *args) -> None:  # noqa: A002 - matches base signature
                 if os.getenv("NANOBOT_HTTP_LOG", "") == "1":
                     super().log_message(format, *args)
 
+        class WebServer(ThreadingHTTPServer):
+            daemon_threads = True
+            allow_reuse_address = True
+
         try:
-            server = ThreadingHTTPServer((host, health_port), HealthHandler)
+            server = WebServer((host, web_port), WebHandler)
         except OSError as exc:
             console.print(
-                f"[yellow]Warning: Health server failed to start on {host}:{health_port}: {exc}[/yellow]"
+                f"[yellow]Warning: Web server failed to start on {host}:{web_port}: {exc}[/yellow]"
             )
             return None
 
-        thread = Thread(target=server.serve_forever, name="nanobot-health", daemon=True)
+        thread = Thread(target=server.serve_forever, name="nanobot-web", daemon=True)
         thread.start()
-        console.print(f"[green]✓[/green] Health server: http://{host}:{health_port}/health")
+        console.print(f"[green]✓[/green] Web UI: http://{host}:{web_port}/")
         return server
 
     http_enabled = os.getenv("NANOBOT_HTTP_ENABLED", "1").lower() not in {"0", "false", "no", "off"}
-    health_server = start_health_server(config.gateway.host, port) if http_enabled else None
+    web_server = start_web_server(config.gateway.host, port) if http_enabled else None
     
     # Create components
     bus = MessageBus()
@@ -221,9 +472,22 @@ def gateway(
     api_base = config.get_api_base()
     
     if not api_key:
-        console.print("[red]Error: No API key configured.[/red]")
-        console.print("Set one in ~/.nanobot/config.json under providers.openrouter.apiKey")
-        raise typer.Exit(1)
+        console.print("[yellow]Warning: No API key configured. Web UI is available for setup.[/yellow]")
+        console.print("Set one in ~/.nanobot/config.json under providers.together.apiKey or providers.openrouter.apiKey")
+
+        async def run_without_agent():
+            try:
+                while True:
+                    await asyncio.sleep(3600)
+            except KeyboardInterrupt:
+                console.print("\nShutting down...")
+            finally:
+                if web_server:
+                    web_server.shutdown()
+                    web_server.server_close()
+
+        asyncio.run(run_without_agent())
+        return
     
     provider = LiteLLMProvider(
         api_key=api_key,
@@ -302,9 +566,9 @@ def gateway(
             agent.stop()
             await channels.stop_all()
         finally:
-            if health_server:
-                health_server.shutdown()
-                health_server.server_close()
+            if web_server:
+                web_server.shutdown()
+                web_server.server_close()
     
     asyncio.run(run())
 
