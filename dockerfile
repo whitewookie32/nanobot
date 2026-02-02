@@ -1,22 +1,41 @@
+# syntax=docker/dockerfile:1
 FROM python:3.11-slim
 
-# install system deps (if any needed)
-RUN apt-get update && apt-get install -y --no-install-recommends build-essential git && rm -rf /var/lib/apt/lists/*
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    VIRTUAL_ENV=/opt/venv \
+    PATH="/opt/venv/bin:$PATH"
+
+# Minimal runtime deps for bash entrypoint + TLS.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash \
+    ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+
+RUN python -m venv "$VIRTUAL_ENV"
 
 WORKDIR /app
-COPY . /app
 
-# Create a non-root user (optional but good practice)
-RUN useradd -m appuser
-USER appuser
+# Install package (keeps image smaller than copying full repo).
+COPY pyproject.toml README.md LICENSE /app/
+COPY nanobot /app/nanobot
+COPY bridge /app/bridge
+RUN pip install --upgrade pip \
+  && pip install .
 
-# Install project in editable mode so CLI is available
-RUN pip install --upgrade pip
-RUN pip install -e .
-
-# copy start script and make executable
-COPY --chown=appuser:appuser start.sh /app/start.sh
+COPY start.sh /app/start.sh
 RUN chmod +x /app/start.sh
 
-# Default command
-CMD ["/app/start.sh"]
+# Create a non-root user for runtime.
+RUN useradd -m -u 10001 appuser \
+  && mkdir -p /home/appuser/.nanobot \
+  && chown -R appuser:appuser /home/appuser
+
+USER appuser
+ENV HOME=/home/appuser
+
+EXPOSE 18790
+
+ENTRYPOINT ["/app/start.sh"]
