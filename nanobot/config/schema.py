@@ -50,6 +50,7 @@ class ProvidersConfig(BaseModel):
     anthropic: ProviderConfig = Field(default_factory=ProviderConfig)
     openai: ProviderConfig = Field(default_factory=ProviderConfig)
     openrouter: ProviderConfig = Field(default_factory=ProviderConfig)
+    together: ProviderConfig = Field(default_factory=ProviderConfig)
     zhipu: ProviderConfig = Field(default_factory=ProviderConfig)
     vllm: ProviderConfig = Field(default_factory=ProviderConfig)
     gemini: ProviderConfig = Field(default_factory=ProviderConfig)
@@ -94,6 +95,7 @@ class Config(BaseSettings):
         """Get API key in priority order: OpenRouter > Anthropic > OpenAI > Gemini > Zhipu > vLLM."""
         return (
             self.providers.openrouter.api_key or
+            self.providers.together.api_key or
             self.providers.anthropic.api_key or
             self.providers.openai.api_key or
             self.providers.gemini.api_key or
@@ -106,6 +108,8 @@ class Config(BaseSettings):
         """Get API base URL if using OpenRouter, Zhipu or vLLM."""
         if self.providers.openrouter.api_key:
             return self.providers.openrouter.api_base or "https://openrouter.ai/api/v1"
+        if self.providers.together.api_key:
+            return self.providers.together.api_base or "https://api.together.xyz/v1"
         if self.providers.zhipu.api_key:
             return self.providers.zhipu.api_base
         if self.providers.vllm.api_base:

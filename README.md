@@ -86,7 +86,7 @@ uv pip install nanobot-ai
 
 > [!TIP]
 > Set your API key in `~/.nanobot/config.json`.
-> Get API keys: [OpenRouter](https://openrouter.ai/keys) (LLM) · [Brave Search](https://brave.com/search/api/) (optional, for web search)
+> Get API keys: [OpenRouter](https://openrouter.ai/keys) or [Together AI](https://api.together.xyz/settings/api-keys) (LLM) · [Brave Search](https://brave.com/search/api/) (optional, for web search)
 > You can also change the model to `minimax/minimax-m2` for lower cost.
 
 **1. Initialize**
@@ -109,8 +109,29 @@ nanobot onboard
       "model": "anthropic/claude-opus-4-5"
     }
   },
-  "webSearch": {
-    "apiKey": "BSA-xxx"
+  "tools": {
+    "web": {
+      "search": {
+        "apiKey": "BSA-xxx"
+      }
+    }
+  }
+}
+```
+
+**Together AI alternative** (`~/.nanobot/config.json`)
+
+```json
+{
+  "providers": {
+    "together": {
+      "apiKey": "together-xxx"
+    }
+  },
+  "agents": {
+    "defaults": {
+      "model": "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"
+    }
   }
 }
 ```
@@ -160,6 +181,23 @@ nanobot agent -m "Hello from my local LLM!"
 
 > [!TIP]
 > The `apiKey` can be any non-empty string for local servers that don't require authentication.
+
+## Railway (Docker)
+
+Railway can build from the included `Dockerfile` and uses `railway.json` to force Docker builds.
+
+**Required environment variables**
+- `TOGETHER_API_KEY` (or `TOGETHERAI_API_KEY`)
+- `MODEL` (Together model name, e.g. `meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo`)
+- `NANOBOT_WRITE_CONFIG=1`
+
+**Optional environment variables**
+- `OPENROUTER_API_KEY` (if you prefer OpenRouter)
+- `WEBSEARCH_API_KEY` (Brave Search)
+- `TELEGRAM_TOKEN`, `TELEGRAM_ALLOW_FROM` (comma-separated), `TELEGRAM_ENABLED`
+- `WHATSAPP_ENABLED`
+
+Railway injects `PORT`, and the gateway binds to it automatically. Health checks respond on `/health`.
 
 ## 💬 Chat Apps
 

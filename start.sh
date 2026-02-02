@@ -22,7 +22,7 @@ CONFIG_FILE="${CONFIG_DIR}/config.json"
 mkdir -p "$CONFIG_DIR"
 
 # Create config.json from environment variables (basic example).
-# Set these env vars in Railway: OPENROUTER_API_KEY, TELEGRAM_TOKEN, TELEGRAM_ALLOW_FROM (comma-separated), MODEL
+# Set these env vars in Railway: TOGETHER_API_KEY (or TOGETHERAI_API_KEY), OPENROUTER_API_KEY, TELEGRAM_TOKEN, TELEGRAM_ALLOW_FROM (comma-separated), MODEL
 WRITE_CONFIG="${NANOBOT_WRITE_CONFIG:-auto}"
 should_write=0
 if [[ "$WRITE_CONFIG" == "1" || "$WRITE_CONFIG" == "true" || "$WRITE_CONFIG" == "yes" ]]; then
@@ -41,11 +41,17 @@ items = [item.strip() for item in raw.split(",") if item.strip()]
 print(json.dumps(items))
 PY
 )
+  TOGETHER_KEY="${TOGETHER_API_KEY:-${TOGETHERAI_API_KEY:-}}"
+  TOGETHER_BASE="${TOGETHER_API_BASE:-}"
   cat > "$CONFIG_FILE" <<EOF
 {
   "providers": {
     "openrouter": {
       "apiKey": "${OPENROUTER_API_KEY:-}"
+    },
+    "together": {
+      "apiKey": "${TOGETHER_KEY}",
+      "apiBase": "${TOGETHER_BASE}"
     }
   },
   "agents": {

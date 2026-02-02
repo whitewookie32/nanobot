@@ -31,15 +31,25 @@ class LiteLLMProvider(LLMProvider):
             (api_key and api_key.startswith("sk-or-")) or
             (api_base and "openrouter" in api_base)
         )
+
+        # Detect Together AI by api_base or model prefix
+        self.is_together = (
+            (api_base and "together" in api_base) or
+            default_model.startswith("together_ai/")
+        )
         
         # Track if using custom endpoint (vLLM, etc.)
-        self.is_vllm = bool(api_base) and not self.is_openrouter
+        self.is_vllm = bool(api_base) and not self.is_openrouter and not self.is_together
         
         # Configure LiteLLM based on provider
         if api_key:
             if self.is_openrouter:
                 # OpenRouter mode - set key
                 os.environ["OPENROUTER_API_KEY"] = api_key
+            elif self.is_together:
+                # Together AI mode
+                os.environ.setdefault("TOGETHERAI_API_KEY", api_key)
+                os.environ.setdefault("TOGETHER_API_KEY", api_key)
             elif self.is_vllm:
                 # vLLM/custom endpoint - uses OpenAI-compatible API
                 os.environ["OPENAI_API_KEY"] = api_key
@@ -94,6 +104,22 @@ class LiteLLMProvider(LLMProvider):
         ):
             model = f"zhipu/{model}"
         
+        # For Together AI, ensure together_ai/ prefix if not already present
+        if self.is_together and not model.startswith("together_ai/"):
+            known_prefixes = {
+                "openrouter",
+                "anthropic",
+                "openai",
+                "gemini",
+                "zhipu",
+                "zai",
+                "hosted_vllm",
+                "together_ai",
+            }
+            provider_prefix = model.split("/", 1)[0]
+            if provider_prefix not in known_prefixes:
+                model = f"together_ai/{model}"
+
         # For vLLM, use hosted_vllm/ prefix per LiteLLM docs
         # Convert openai/ prefix to hosted_vllm/ if user specified it
         if self.is_vllm:
