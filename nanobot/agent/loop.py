@@ -72,7 +72,9 @@ class AgentLoop:
         self.tools.register(ListDirTool())
         
         # Shell tool
-        self.tools.register(ExecTool(working_dir=str(self.workspace)))
+        import os
+        shell_cwd = os.getenv("NANOBOT_SHELL_CWD")
+        self.tools.register(ExecTool(working_dir=shell_cwd or str(self.workspace)))
         
         # Web tools
         self.tools.register(WebSearchTool(api_key=self.brave_api_key))
