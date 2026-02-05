@@ -8,6 +8,7 @@
     <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
     <a href="./COMMUNICATION.md"><img src="https://img.shields.io/badge/Feishu-Group-E9DBFC?style=flat&logo=feishu&logoColor=white" alt="Feishu"></a>
     <a href="./COMMUNICATION.md"><img src="https://img.shields.io/badge/WeChat-Group-C5EAB4?style=flat&logo=wechat&logoColor=white" alt="WeChat"></a>
+    <a href="https://discord.gg/MnCvHqpUGB"><img src="https://img.shields.io/badge/Discord-Community-5865F2?style=flat&logo=discord&logoColor=white" alt="Discord"></a>
   </p>
 </div>
 
@@ -17,7 +18,9 @@
 
 ## 📢 News
 
-- **2025-02-01** 🎉 nanobot launched! Welcome to try 🐈 nanobot!
+- **2026-02-05** ✨ Added Feishu channel, DeepSeek provider, and better scheduled tasks support!
+- **2026-02-04** 🚀 v0.1.3.post4 released with multi-provider & Docker support! Check [release notes](https://github.com/HKUDS/nanobot/releases/tag/v0.1.3.post4) for details.
+- **2026-02-01** 🎉 nanobot launched! Welcome to try 🐈 nanobot!
 
 ## Key Features of nanobot:
 
@@ -60,13 +63,7 @@
 
 ## 📦 Install
 
-**Install from PyPi**
-
-```bash
-pip install nanobot-ai
-```
-
-**Install from source** (recommended for development)
+**Install from source** (latest features, recommended for development)
 
 ```bash
 git clone https://github.com/HKUDS/nanobot.git
@@ -74,12 +71,16 @@ cd nanobot
 pip install -e .
 ```
 
-**Install with uv**
+**Install with [uv](https://github.com/astral-sh/uv)** (stable, fast)
 
 ```bash
-uv venv
-source .venv/bin/activate
-uv pip install nanobot-ai
+uv tool install nanobot-ai
+```
+
+**Install from PyPI** (stable)
+
+```bash
+pip install nanobot-ai
 ```
 
 ## 🚀 Quick Start
@@ -210,12 +211,13 @@ The gateway exposes a lightweight web UI for configuring keys and basic settings
 
 ## 💬 Chat Apps
 
-Talk to your nanobot through Telegram or WhatsApp — anytime, anywhere.
+Talk to your nanobot through Telegram, WhatsApp, or Feishu — anytime, anywhere.
 
 | Channel | Setup |
 |---------|-------|
 | **Telegram** | Easy (just a token) |
 | **WhatsApp** | Medium (scan QR) |
+| **Feishu** | Medium (app credentials) |
 
 <details>
 <summary><b>Telegram</b> (Recommended)</summary>
@@ -286,7 +288,73 @@ nanobot gateway
 
 </details>
 
+<details>
+<summary><b>Feishu (飞书)</b></summary>
+
+Uses **WebSocket** long connection — no public IP required.
+
+```bash
+pip install nanobot-ai[feishu]
+```
+
+**1. Create a Feishu bot**
+- Visit [Feishu Open Platform](https://open.feishu.cn/app)
+- Create a new app → Enable **Bot** capability
+- **Permissions**: Add `im:message` (send messages)
+- **Events**: Add `im.message.receive_v1` (receive messages)
+  - Select **Long Connection** mode (requires running nanobot first to establish connection)
+- Get **App ID** and **App Secret** from "Credentials & Basic Info"
+- Publish the app
+
+**2. Configure**
+
+```json
+{
+  "channels": {
+    "feishu": {
+      "enabled": true,
+      "appId": "cli_xxx",
+      "appSecret": "xxx",
+      "encryptKey": "",
+      "verificationToken": "",
+      "allowFrom": []
+    }
+  }
+}
+```
+
+> `encryptKey` and `verificationToken` are optional for Long Connection mode.
+> `allowFrom`: Leave empty to allow all users, or add `["ou_xxx"]` to restrict access.
+
+**3. Run**
+
+```bash
+nanobot gateway
+```
+
+> [!TIP]
+> Feishu uses WebSocket to receive messages — no webhook or public IP needed!
+
+</details>
+
 ## ⚙️ Configuration
+
+Config file: `~/.nanobot/config.json`
+
+### Providers
+
+> [!NOTE]
+> Groq provides free voice transcription via Whisper. If configured, Telegram voice messages will be automatically transcribed.
+
+| Provider | Purpose | Get API Key |
+|----------|---------|-------------|
+| `openrouter` | LLM (recommended, access to all models) | [openrouter.ai](https://openrouter.ai) |
+| `anthropic` | LLM (Claude direct) | [console.anthropic.com](https://console.anthropic.com) |
+| `openai` | LLM (GPT direct) | [platform.openai.com](https://platform.openai.com) |
+| `deepseek` | LLM (DeepSeek direct) | [platform.deepseek.com](https://platform.deepseek.com) |
+| `groq` | LLM + **Voice transcription** (Whisper) | [console.groq.com](https://console.groq.com) |
+| `gemini` | LLM (Gemini direct) | [aistudio.google.com](https://aistudio.google.com) |
+
 
 <details>
 <summary><b>Full config example</b></summary>
@@ -301,6 +369,9 @@ nanobot gateway
   "providers": {
     "openrouter": {
       "apiKey": "sk-or-v1-xxx"
+    },
+    "groq": {
+      "apiKey": "gsk_xxx"
     }
   },
   "channels": {
@@ -311,6 +382,14 @@ nanobot gateway
     },
     "whatsapp": {
       "enabled": false
+    },
+    "feishu": {
+      "enabled": false,
+      "appId": "cli_xxx",
+      "appSecret": "xxx",
+      "encryptKey": "",
+      "verificationToken": "",
+      "allowFrom": []
     }
   },
   "tools": {
@@ -354,6 +433,31 @@ nanobot cron remove <job_id>
 
 </details>
 
+## 🐳 Docker
+
+> [!TIP]
+> The `-v ~/.nanobot:/root/.nanobot` flag mounts your local config directory into the container, so your config and workspace persist across container restarts.
+
+Build and run nanobot in a container:
+
+```bash
+# Build the image
+docker build -t nanobot .
+
+# Initialize config (first time only)
+docker run -v ~/.nanobot:/root/.nanobot --rm nanobot onboard
+
+# Edit config on host to add API keys
+vim ~/.nanobot/config.json
+
+# Run gateway (connects to Telegram/WhatsApp)
+docker run -v ~/.nanobot:/root/.nanobot -p 18790:18790 nanobot gateway
+
+# Or run a single command
+docker run -v ~/.nanobot:/root/.nanobot --rm nanobot agent -m "Hello!"
+docker run -v ~/.nanobot:/root/.nanobot --rm nanobot status
+```
+
 ## 📁 Project Structure
 
 ```
@@ -382,6 +486,7 @@ PRs welcome! The codebase is intentionally small and readable. 🤗
 
 **Roadmap** — Pick an item and [open a PR](https://github.com/HKUDS/nanobot/pulls)!
 
+- [x] **Voice Transcription** — Support for Groq Whisper (Issue #13)
 - [ ] **Multi-modal** — See and hear (images, voice, video)
 - [ ] **Long-term memory** — Never forget important context
 - [ ] **Better reasoning** — Multi-step planning and reflection
@@ -391,10 +496,9 @@ PRs welcome! The codebase is intentionally small and readable. 🤗
 ### Contributors
 
 <a href="https://github.com/HKUDS/nanobot/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=HKUDS/nanobot" />
+  <img src="https://contrib.rocks/image?repo=HKUDS/nanobot&max=100&columns=12" />
 </a>
 
----
 
 ## ⭐ Star History
 
@@ -411,4 +515,9 @@ PRs welcome! The codebase is intentionally small and readable. 🤗
 <p align="center">
   <em> Thanks for visiting ✨ nanobot!</em><br><br>
   <img src="https://visitor-badge.laobi.icu/badge?page_id=HKUDS.nanobot&style=for-the-badge&color=00d4ff" alt="Views">
+</p>
+
+
+<p align="center">
+  <sub>nanobot is for educational, research, and technical exchange purposes only</sub>
 </p>
