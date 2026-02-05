@@ -16,29 +16,32 @@ if [[ "${NANOBOT_SKIP_INSTALL:-}" != "1" ]]; then
   fi
 fi
 
-# Prepare config directory
-CONFIG_DIR="${HOME}/.nanobot"
+# Prepare config/workspace directories
+# Prefer Railway volume at /Nano if present and envs not set.
+if [[ -d "/Nano" ]]; then
+  export NANOBOT_DATA_DIR="${NANOBOT_DATA_DIR:-/Nano/.nanobot}"
+  export NANOBOT_WORKSPACE="${NANOBOT_WORKSPACE:-/Nano/workspace}"
+fi
+
+CONFIG_DIR="${NANOBOT_DATA_DIR:-$HOME/.nanobot}"
+WORKSPACE_DIR="${NANOBOT_WORKSPACE:-$HOME/.nanobot/workspace}"
 CONFIG_FILE="${CONFIG_DIR}/config.json"
 mkdir -p "$CONFIG_DIR"
+mkdir -p "$WORKSPACE_DIR"
 
 # Setup memory persistence for Railway volume at /Nano
-# The /Nano directory is mounted as a persistent volume on Railway
+# If workspace is not under /Nano, symlink memory to /Nano/memory.
 if [[ -d "/Nano" ]]; then
   echo "Setting up Railway persistent memory at /Nano..."
-  
-  # Create memory directory in the volume
   mkdir -p /Nano/memory
-  
-  # Create workspace directory if it doesn't exist
-  mkdir -p "$CONFIG_DIR/workspace"
-  
-  # Remove any existing memory directory (could be a regular dir or broken symlink)
-  rm -rf "$CONFIG_DIR/workspace/memory"
-  
-  # Create symlink so nanobot writes to the persistent volume
-  ln -s /Nano/memory "$CONFIG_DIR/workspace/memory"
-  
-  echo "✓ Memory persistence configured: $CONFIG_DIR/workspace/memory -> /Nano/memory"
+  if [[ "$WORKSPACE_DIR" != /Nano/* ]]; then
+    rm -rf "$WORKSPACE_DIR/memory"
+    ln -s /Nano/memory "$WORKSPACE_DIR/memory"
+    echo "OK Memory persistence configured: $WORKSPACE_DIR/memory -> /Nano/memory"
+  else
+    mkdir -p "$WORKSPACE_DIR/memory"
+    echo "OK Memory persistence configured: $WORKSPACE_DIR/memory"
+  fi
 fi
 
 # Create config.json from environment variables (basic example).
@@ -65,6 +68,10 @@ PY
   TOGETHER_BASE="${TOGETHER_API_BASE:-}"
   cat > "$CONFIG_FILE" <<EOF
 {
+  "litellmSettings": {
+    "allowedOpenAIParams": ["tools", "tool_choice"],
+    "dropParams": false
+  },
   "providers": {
     "openrouter": {
       "apiKey": "${OPENROUTER_API_KEY:-}"
@@ -76,7 +83,8 @@ PY
   },
   "agents": {
     "defaults": {
-      "model": "${MODEL:-anthropic/claude-opus-4-5}"
+      "model": "${MODEL:-moonshotai/Kimi-K2.5}",
+      "workspace": "${WORKSPACE_DIR}"
     }
   },
   "channels": {
