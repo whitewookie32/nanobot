@@ -21,6 +21,26 @@ CONFIG_DIR="${HOME}/.nanobot"
 CONFIG_FILE="${CONFIG_DIR}/config.json"
 mkdir -p "$CONFIG_DIR"
 
+# Setup memory persistence for Railway volume at /Nano
+# The /Nano directory is mounted as a persistent volume on Railway
+if [[ -d "/Nano" ]]; then
+  echo "Setting up Railway persistent memory at /Nano..."
+  
+  # Create memory directory in the volume
+  mkdir -p /Nano/memory
+  
+  # Create workspace directory if it doesn't exist
+  mkdir -p "$CONFIG_DIR/workspace"
+  
+  # Remove any existing memory directory (could be a regular dir or broken symlink)
+  rm -rf "$CONFIG_DIR/workspace/memory"
+  
+  # Create symlink so nanobot writes to the persistent volume
+  ln -s /Nano/memory "$CONFIG_DIR/workspace/memory"
+  
+  echo "✓ Memory persistence configured: $CONFIG_DIR/workspace/memory -> /Nano/memory"
+fi
+
 # Create config.json from environment variables (basic example).
 # Set these env vars in Railway: TOGETHER_API_KEY (or TOGETHERAI_API_KEY), OPENROUTER_API_KEY, TELEGRAM_TOKEN, TELEGRAM_ALLOW_FROM (comma-separated), MODEL
 WRITE_CONFIG="${NANOBOT_WRITE_CONFIG:-auto}"
