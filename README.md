@@ -205,6 +205,7 @@ Railway injects `PORT`, and the gateway binds to it automatically. Health checks
 The gateway exposes a lightweight web UI for configuring keys and basic settings.
 
 - Open `http://<host>:<port>/` to view and update settings.
+- Advanced GUI (Svelte): build with `cd ui && npm install && npm run build`, then open `http://<host>:<port>/app`.
 - After saving, restart the service to apply changes.
 - If `NANOBOT_WRITE_CONFIG=1`, your changes will be overwritten on restart. Set it to `0` after the first save.
 - Disable the UI with `NANOBOT_HTTP_ENABLED=0`.

@@ -435,23 +435,47 @@ def gateway(
         save_config(cfg)
         _maybe_restart()
 
+    def _get_ui_dist() -> Path | None:
+        candidates = [
+            Path(__file__).resolve().parent.parent / "ui" / "dist",
+            Path(__file__).resolve().parent.parent.parent / "ui" / "dist",
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+        return None
+
+    ui_dist = _get_ui_dist()
+    ui_root = ui_dist.resolve() if ui_dist else None
+
     def start_web_server(host: str, web_port: int) -> ThreadingHTTPServer | None:
+        import mimetypes
+
         class WebHandler(BaseHTTPRequestHandler):
-            def _send_text(self, text: str, status: int = 200) -> None:
-                body = text.encode("utf-8")
+            def _send_bytes(self, body: bytes, content_type: str, status: int = 200) -> None:
                 self.send_response(status)
-                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.send_header("Content-Type", content_type)
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
 
+            def _send_text(self, text: str, status: int = 200) -> None:
+                self._send_bytes(text.encode("utf-8"), "text/plain; charset=utf-8", status)
+
             def _send_html(self, html_text: str, status: int = 200) -> None:
-                body = html_text.encode("utf-8")
-                self.send_response(status)
-                self.send_header("Content-Type", "text/html; charset=utf-8")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+                self._send_bytes(html_text.encode("utf-8"), "text/html; charset=utf-8", status)
+
+            def _send_json(self, payload: str, status: int = 200) -> None:
+                self._send_bytes(payload.encode("utf-8"), "application/json; charset=utf-8", status)
+
+            def _send_file(self, file_path: Path, status: int = 200) -> None:
+                try:
+                    body = file_path.read_bytes()
+                except Exception:
+                    self._send_text("not found", 404)
+                    return
+                content_type, _ = mimetypes.guess_type(str(file_path))
+                self._send_bytes(body, content_type or "application/octet-stream", status)
 
             def _read_body(self) -> str:
                 length = int(self.headers.get("Content-Length", "0"))
@@ -459,10 +483,37 @@ def gateway(
                     return ""
                 return self.rfile.read(length).decode("utf-8", errors="ignore")
 
+            def _serve_app(self, path: str) -> bool:
+                if not ui_dist or not ui_root:
+                    self._send_text("GUI not built. Run: cd ui && npm install && npm run build", 404)
+                    return True
+
+                rel = path[len("/app"):].lstrip("/")
+                target = (ui_dist / rel) if rel else (ui_dist / "index.html")
+                try:
+                    resolved = target.resolve()
+                except Exception:
+                    resolved = target
+                if not str(resolved).startswith(str(ui_root)):
+                    self._send_text("not found", 404)
+                    return True
+                if not target.exists() or target.is_dir():
+                    target = ui_dist / "index.html"
+                self._send_file(target)
+                return True
+
             def do_GET(self) -> None:  # noqa: N802 - required by BaseHTTPRequestHandler
                 path = urlparse(self.path).path
                 if path in ("/health", "/healthz", "/ready"):
                     self._send_text("ok", 200)
+                    return
+                if path.startswith("/app"):
+                    if self._serve_app(path):
+                        return
+                if path == "/api/config":
+                    cfg = load_config()
+                    payload = json.dumps(convert_to_camel(cfg.model_dump()), indent=2)
+                    self._send_json(payload, 200)
                     return
                 if path in ("/", "/ui"):
                     query = parse_qs(urlparse(self.path).query)
@@ -474,6 +525,14 @@ def gateway(
 
             def do_POST(self) -> None:  # noqa: N802 - required by BaseHTTPRequestHandler
                 path = urlparse(self.path).path
+                if path == "/api/config":
+                    try:
+                        body = self._read_body()
+                        _update_config_raw(body)
+                        self._send_json('{"ok": true}', 200)
+                    except Exception as exc:
+                        self._send_json(json.dumps({"ok": False, "error": str(exc)}), 400)
+                    return
                 if path in ("/config/raw",):
                     try:
                         body = self._read_body()
