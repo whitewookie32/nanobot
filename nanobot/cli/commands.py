@@ -159,12 +159,21 @@ def gateway(
 ):
     """Start the nanobot gateway."""
     import html
+    import json
     import os
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
     from threading import Thread
     from urllib.parse import parse_qs, urlparse
 
-    from nanobot.config.loader import load_config, save_config, get_config_path, get_data_dir
+    from nanobot.config.loader import (
+        load_config,
+        save_config,
+        get_config_path,
+        get_data_dir,
+        convert_keys,
+        convert_to_camel,
+    )
+    from nanobot.config.schema import Config
     from nanobot.bus.queue import MessageBus
     from nanobot.providers.litellm_provider import LiteLLMProvider
     from nanobot.agent.loop import AgentLoop
@@ -201,6 +210,14 @@ def gateway(
         telegram_set = bool(cfg.channels.telegram.token)
 
         allow_from = ", ".join(cfg.channels.telegram.allow_from)
+        raw_json = ""
+        if cfg_path.exists():
+            try:
+                raw_json = cfg_path.read_text(encoding="utf-8")
+            except Exception:
+                raw_json = ""
+        if not raw_json:
+            raw_json = json.dumps(convert_to_camel(cfg.model_dump()), indent=2)
         notice = ""
         if saved:
             notice = "<div class='notice ok'>Saved. Restart the service to apply changes.</div>"
@@ -236,6 +253,11 @@ def gateway(
       label {{ display: block; font-weight: 600; margin-bottom: 6px; }}
       input[type="text"], input[type="password"] {{
         width: 100%; padding: 10px 12px; border: 1px solid #d4d7e0; border-radius: 8px;
+      }}
+      textarea {{
+        width: 100%; min-height: 320px; padding: 10px 12px; border: 1px solid #d4d7e0;
+        border-radius: 8px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+        "Liberation Mono", "Courier New", monospace; font-size: 12px;
       }}
       .hint {{ font-size: 12px; color: #555; margin-top: 6px; }}
       .notice {{ padding: 10px 12px; border-radius: 8px; margin-bottom: 12px; }}
@@ -341,10 +363,26 @@ def gateway(
           </footer>
         </form>
       </div>
+      <div class="card">
+        <h3>Advanced: Raw Config JSON</h3>
+        <form method="post" action="/config/raw">
+          <label for="config_json">config.json</label>
+          <textarea id="config_json" name="config_json" spellcheck="false">{_escape(raw_json)}</textarea>
+          <div class="hint">Edits replace the entire config. Invalid JSON will be rejected.</div>
+          <button type="submit">Save Raw Config</button>
+        </form>
+      </div>
     </main>
   </body>
 </html>
 """
+
+    def _maybe_restart() -> None:
+        if _is_true(os.getenv("NANOBOT_RESTART_ON_SAVE", "0")):
+            console.print("[yellow]Restarting nanobot to apply settings...[/yellow]")
+            # Exit the process to let Railway (or another supervisor) restart the service.
+            import os as _os
+            _os._exit(0)
 
     def _update_config(fields: dict[str, list[str]]) -> None:
         cfg = load_config()
@@ -387,11 +425,15 @@ def gateway(
         cfg.channels.whatsapp.enabled = whatsapp_enabled
 
         save_config(cfg)
-        if _is_true(os.getenv("NANOBOT_RESTART_ON_SAVE", "0")):
-            console.print("[yellow]Restarting nanobot to apply settings...[/yellow]")
-            # Exit the process to let Railway (or another supervisor) restart the service.
-            import os as _os
-            _os._exit(0)
+        _maybe_restart()
+
+    def _update_config_raw(raw_json: str) -> None:
+        if not raw_json.strip():
+            raise ValueError("config_json is empty")
+        data = json.loads(raw_json)
+        cfg = Config.model_validate(convert_keys(data))
+        save_config(cfg)
+        _maybe_restart()
 
     def start_web_server(host: str, web_port: int) -> ThreadingHTTPServer | None:
         class WebHandler(BaseHTTPRequestHandler):
@@ -432,6 +474,18 @@ def gateway(
 
             def do_POST(self) -> None:  # noqa: N802 - required by BaseHTTPRequestHandler
                 path = urlparse(self.path).path
+                if path in ("/config/raw",):
+                    try:
+                        body = self._read_body()
+                        fields = parse_qs(body, keep_blank_values=True)
+                        raw_json = _get_field(fields, "config_json")
+                        _update_config_raw(raw_json)
+                        self.send_response(303)
+                        self.send_header("Location", "/?saved=1")
+                        self.end_headers()
+                    except Exception as exc:
+                        self._send_html(_render_settings_page(error=str(exc)), 400)
+                    return
                 if path in ("/config", "/"):
                     try:
                         body = self._read_body()
