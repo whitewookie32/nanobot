@@ -161,8 +161,12 @@ def gateway(
     import html
     import json
     import os
+    import re
+    import shutil
+    import subprocess
+    import time
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-    from threading import Thread
+    from threading import Thread, Lock
     from urllib.parse import parse_qs, urlparse
 
     from nanobot.config.loader import (
@@ -435,11 +439,167 @@ def gateway(
         save_config(cfg)
         _maybe_restart()
 
+    codex_lock = Lock()
+    codex_state = {
+        "running": False,
+        "pid": None,
+        "started_at": None,
+        "finished_at": None,
+        "exit_code": None,
+        "lines": [],
+        "error": None,
+    }
+
+    def _codex_env() -> tuple[dict[str, str], str]:
+        env = os.environ.copy()
+        codex_home = env.get("CODEX_HOME") or str(Path.home() / ".codex")
+        env["CODEX_HOME"] = codex_home
+        return env, codex_home
+
+    def _codex_installed() -> bool:
+        return shutil.which("codex") is not None
+
+    def _extract_device_info(lines: list[str]) -> dict[str, str]:
+        url = ""
+        code = ""
+        for line in reversed(lines):
+            if not url:
+                match = re.search(r"https?://\\S+", line)
+                if match:
+                    url = match.group(0).rstrip(").,")
+            if not code and "code" in line.lower():
+                match = re.search(r"([A-Z0-9]{4,}(?:-[A-Z0-9]{4,})?)", line)
+                if match:
+                    code = match.group(1)
+            if url and code:
+                break
+        return {"url": url, "code": code}
+
+    def _codex_login_status() -> dict:
+        installed = _codex_installed()
+        env, codex_home = _codex_env()
+        output = ""
+        logged_in = False
+        if installed:
+            try:
+                result = subprocess.run(
+                    ["codex", "login", "status"],
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                )
+                output = (result.stdout or result.stderr or "").strip()
+                logged_in = result.returncode == 0
+            except Exception as exc:
+                output = str(exc)
+        return {
+            "installed": installed,
+            "loggedIn": logged_in,
+            "statusOutput": output,
+            "codexHome": codex_home,
+        }
+
+    def _codex_login_start() -> dict:
+        if not _codex_installed():
+            return {"ok": False, "error": "codex CLI not installed"}
+
+        with codex_lock:
+            if codex_state["running"]:
+                return {"ok": True, "running": True}
+            codex_state.update(
+                {
+                    "running": True,
+                    "pid": None,
+                    "started_at": time.time(),
+                    "finished_at": None,
+                    "exit_code": None,
+                    "lines": [],
+                    "error": None,
+                }
+            )
+
+        env, _ = _codex_env()
+        try:
+            proc = subprocess.Popen(
+                ["codex", "login", "--device-auth"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                env=env,
+                bufsize=1,
+            )
+        except Exception as exc:
+            with codex_lock:
+                codex_state["running"] = False
+                codex_state["error"] = str(exc)
+            return {"ok": False, "error": str(exc)}
+
+        with codex_lock:
+            codex_state["pid"] = proc.pid
+
+        def _reader() -> None:
+            try:
+                if proc.stdout:
+                    for line in proc.stdout:
+                        entry = line.rstrip()
+                        with codex_lock:
+                            codex_state["lines"].append(entry)
+                            codex_state["lines"] = codex_state["lines"][-200:]
+                proc.wait()
+            finally:
+                with codex_lock:
+                    codex_state["running"] = False
+                    codex_state["exit_code"] = proc.returncode
+                    codex_state["finished_at"] = time.time()
+
+        Thread(target=_reader, daemon=True).start()
+        return {"ok": True}
+
+    def _codex_logout() -> dict:
+        if not _codex_installed():
+            return {"ok": False, "error": "codex CLI not installed"}
+        env, _ = _codex_env()
+        try:
+            result = subprocess.run(
+                ["codex", "logout"],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            output = (result.stdout or result.stderr or "").strip()
+            return {"ok": result.returncode == 0, "output": output}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
+    def _codex_snapshot() -> dict:
+        status = _codex_login_status()
+        with codex_lock:
+            lines = list(codex_state["lines"])
+            login = {
+                "running": codex_state["running"],
+                "pid": codex_state["pid"],
+                "startedAt": codex_state["started_at"],
+                "finishedAt": codex_state["finished_at"],
+                "exitCode": codex_state["exit_code"],
+                "error": codex_state["error"],
+                "lines": lines,
+            }
+        login["device"] = _extract_device_info(lines)
+        return {**status, "login": login}
+
     def _get_ui_dist() -> Path | None:
-        candidates = [
-            Path(__file__).resolve().parent.parent / "ui" / "dist",
-            Path(__file__).resolve().parent.parent.parent / "ui" / "dist",
-        ]
+        candidates = []
+        env_dist = os.getenv("NANOBOT_UI_DIST")
+        if env_dist:
+            candidates.append(Path(env_dist))
+        candidates.extend(
+            [
+                Path.cwd() / "ui" / "dist",
+                Path("/app/ui/dist"),
+                Path(__file__).resolve().parent.parent / "ui" / "dist",
+                Path(__file__).resolve().parent.parent.parent / "ui" / "dist",
+            ]
+        )
         for candidate in candidates:
             if candidate.exists():
                 return candidate
@@ -515,6 +675,10 @@ def gateway(
                     payload = json.dumps(convert_to_camel(cfg.model_dump()), indent=2)
                     self._send_json(payload, 200)
                     return
+                if path == "/api/codex":
+                    payload = json.dumps(_codex_snapshot())
+                    self._send_json(payload, 200)
+                    return
                 if path in ("/", "/ui"):
                     query = parse_qs(urlparse(self.path).query)
                     saved = "saved" in query
@@ -525,6 +689,16 @@ def gateway(
 
             def do_POST(self) -> None:  # noqa: N802 - required by BaseHTTPRequestHandler
                 path = urlparse(self.path).path
+                if path == "/api/codex/login":
+                    result = _codex_login_start()
+                    status = 200 if result.get("ok") else 400
+                    self._send_json(json.dumps(result), status)
+                    return
+                if path == "/api/codex/logout":
+                    result = _codex_logout()
+                    status = 200 if result.get("ok") else 400
+                    self._send_json(json.dumps(result), status)
+                    return
                 if path == "/api/config":
                     try:
                         body = self._read_body()

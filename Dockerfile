@@ -12,6 +12,9 @@ RUN apt-get update && \
     apt-get autoremove -y && \
     rm -rf /var/lib/apt/lists/*
 
+# Install Codex CLI
+RUN npm install -g @openai/codex
+
 WORKDIR /app
 
 # Install Python dependencies first (cached layer)
