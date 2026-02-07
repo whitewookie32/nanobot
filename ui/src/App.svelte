@@ -1,4 +1,4 @@
-<script>
+ï»¿<script>
   import { onMount } from 'svelte';
 
   let loading = true;
@@ -9,6 +9,21 @@
   let rawJson = '';
   let rawDirty = false;
   let lastSaved = '';
+
+  let codex = {
+    installed: false,
+    loggedIn: false,
+    statusOutput: '',
+    codexHome: '',
+    login: {
+      running: false,
+      lines: [],
+      device: { url: '', code: '' }
+    }
+  };
+  let codexLoading = false;
+  let codexError = '';
+  let codexPoll = null;
 
   let form = {
     model: '',
@@ -26,6 +41,7 @@
   };
 
   const apiUrl = '/api/config';
+  const codexUrl = '/api/codex';
 
   const clone = (obj) => {
     if (typeof structuredClone === 'function') return structuredClone(obj);
@@ -178,7 +194,63 @@
     syncRawFromConfig(config);
   };
 
-  onMount(loadConfig);
+  const loadCodex = async (silent = false) => {
+    if (!silent) codexLoading = true;
+    codexError = '';
+    try {
+      const res = await fetch(codexUrl);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      codex = await res.json();
+    } catch (err) {
+      codexError = err?.message || 'Unable to reach Codex API.';
+    } finally {
+      codexLoading = false;
+    }
+  };
+
+  const pollCodex = () => {
+    if (codexPoll) clearInterval(codexPoll);
+    codexPoll = setInterval(async () => {
+      await loadCodex(true);
+      if (!codex?.login?.running) {
+        clearInterval(codexPoll);
+        codexPoll = null;
+      }
+    }, 2000);
+  };
+
+  const startCodexLogin = async () => {
+    codexError = '';
+    try {
+      const res = await fetch('/api/codex/login', { method: 'POST' });
+      const body = await res.json();
+      if (!res.ok || !body.ok) throw new Error(body.error || `HTTP ${res.status}`);
+      await loadCodex();
+      pollCodex();
+    } catch (err) {
+      codexError = err?.message || 'Failed to start login.';
+    }
+  };
+
+  const logoutCodex = async () => {
+    codexError = '';
+    try {
+      const res = await fetch('/api/codex/logout', { method: 'POST' });
+      const body = await res.json();
+      if (!res.ok || !body.ok) throw new Error(body.error || `HTTP ${res.status}`);
+      await loadCodex();
+    } catch (err) {
+      codexError = err?.message || 'Logout failed.';
+    }
+  };
+
+  onMount(() => {
+    loadConfig();
+    loadCodex();
+    return () => {
+      if (codexPoll) clearInterval(codexPoll);
+    };
+  });
 </script>
 
 <div class="shell">
@@ -190,7 +262,7 @@
     </div>
     <div class={`status-pill ${status === 'connected' ? 'ok' : status === 'error' ? 'err' : ''}`}>
       {#if loading}
-        Connecting…
+        Connectingâ€¦
       {:else if status === 'connected'}
         Connected
       {:else}
@@ -250,7 +322,7 @@
 
         <div class="actions">
           <button class="primary" on:click|preventDefault={saveQuick} disabled={saving}>
-            {saving ? 'Saving…' : 'Save Quick Settings'}
+            {saving ? 'Savingâ€¦' : 'Save Quick Settings'}
           </button>
           <button class="ghost" on:click|preventDefault={loadConfig} disabled={loading}>
             Reload
@@ -296,6 +368,81 @@
           </label>
         </div>
       </div>
+
+      <div class="card codex" style="--delay: 0.12s">
+        <div class="card-header">
+          <div>
+            <h2>Codex Login</h2>
+            <p>Device code login for Railway deployments.</p>
+          </div>
+          <div class={`meta ${codex.loggedIn ? 'ok' : 'warn'}`}>
+            {codex.loggedIn ? 'Logged in' : 'Not logged in'}
+          </div>
+        </div>
+
+        {#if codexError}
+          <div class="notice err">{codexError}</div>
+        {/if}
+
+        <div class="fields">
+          <div class="pill-row">
+            <span class={`pill ${codex.installed ? 'ok' : 'warn'}`}>{codex.installed ? 'CLI installed' : 'CLI missing'}</span>
+            <span class="pill">{codex.login?.running ? 'Login in progress' : 'Idle'}</span>
+          </div>
+
+          {#if codex.codexHome}
+            <div class="status-output">Auth cache: <code>{codex.codexHome}</code></div>
+          {/if}
+
+          {#if codex.login?.device?.url}
+            <div class="device">
+              <div class="device-item">
+                <span>Sign-in URL</span>
+                <code>{codex.login.device.url}</code>
+              </div>
+              {#if codex.login?.device?.code}
+                <div class="device-item">
+                  <span>Device Code</span>
+                  <code>{codex.login.device.code}</code>
+                </div>
+              {/if}
+            </div>
+          {/if}
+
+          {#if codex.statusOutput}
+            <div class="status-output">{codex.statusOutput}</div>
+          {/if}
+
+          {#if codex.login?.lines?.length}
+            <div class="log">
+              {#each codex.login.lines as line}
+                <div>{line}</div>
+              {/each}
+            </div>
+          {/if}
+        </div>
+
+        <div class="actions">
+          <button
+            class="primary"
+            on:click|preventDefault={startCodexLogin}
+            disabled={codexLoading || !codex.installed}
+          >
+            {codex.login?.running ? 'Login Runningâ€¦' : 'Start Device Login'}
+          </button>
+          <button class="ghost" on:click|preventDefault={() => loadCodex()} disabled={codexLoading}>
+            Refresh Status
+          </button>
+          <button
+            class="ghost"
+            on:click|preventDefault={logoutCodex}
+            disabled={codexLoading || !codex.loggedIn}
+          >
+            Logout
+          </button>
+        </div>
+        <div class="hint-text">Enable device-code login in ChatGPT security settings.</div>
+      </div>
     </div>
 
     <div class="card raw" style="--delay: 0.15s">
@@ -318,7 +465,7 @@
 
       <div class="actions">
         <button class="primary" on:click|preventDefault={saveRaw} disabled={saving}>
-          {saving ? 'Saving…' : 'Save Raw JSON'}
+          {saving ? 'Savingâ€¦' : 'Save Raw JSON'}
         </button>
         <button class="ghost" on:click|preventDefault={applyRawToForm}>
           Apply JSON to Form
@@ -330,3 +477,4 @@
     </div>
   </section>
 </div>
+

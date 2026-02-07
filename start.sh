@@ -21,6 +21,7 @@ fi
 if [[ -d "/Nano" ]]; then
   export NANOBOT_DATA_DIR="${NANOBOT_DATA_DIR:-/Nano/.nanobot}"
   export NANOBOT_WORKSPACE="${NANOBOT_WORKSPACE:-/Nano/workspace}"
+  export CODEX_HOME="${CODEX_HOME:-/Nano/.codex}"
 fi
 
 CONFIG_DIR="${NANOBOT_DATA_DIR:-$HOME/.nanobot}"
@@ -28,6 +29,15 @@ WORKSPACE_DIR="${NANOBOT_WORKSPACE:-$HOME/.nanobot/workspace}"
 CONFIG_FILE="${CONFIG_DIR}/config.json"
 mkdir -p "$CONFIG_DIR"
 mkdir -p "$WORKSPACE_DIR"
+
+# Codex auth cache (device code login)
+CODEX_DIR="${CODEX_HOME:-$HOME/.codex}"
+mkdir -p "$CODEX_DIR"
+if [[ ! -f "$CODEX_DIR/config.toml" ]]; then
+  cat > "$CODEX_DIR/config.toml" <<'EOF'
+cli_auth_credentials_store = "file"
+EOF
+fi
 
 # Setup memory persistence for Railway volume at /Nano
 # If workspace is not under /Nano, symlink memory to /Nano/memory.
