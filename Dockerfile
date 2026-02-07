@@ -20,12 +20,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Set working directory
 WORKDIR /app
 
-# Copy pyproject.toml first (for layer caching)
-COPY pyproject.toml .
-RUN pip install --no-cache-dir -e .
-
-# Copy application code
+# Copy application code first (needed for editable install)
 COPY . /app/
+
+# Install the package
+RUN pip install --no-cache-dir -e .
 
 # Create data directory for persistent storage
 RUN mkdir -p /data/nanobot
