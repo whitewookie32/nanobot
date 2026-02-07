@@ -1,48 +1,53 @@
-FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+# Dockerfile for nanobot - AI Agent
+# Optimized for Fly.io deployment
 
-# Install Node.js 20 for the WhatsApp bridge
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends curl ca-certificates gnupg git && \
-    mkdir -p /etc/apt/keyrings && \
-    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg && \
-    echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" > /etc/apt/sources.list.d/nodesource.list && \
-    apt-get update && \
-    apt-get install -y --no-install-recommends nodejs && \
-    apt-get purge -y gnupg && \
-    apt-get autoremove -y && \
-    rm -rf /var/lib/apt/lists/*
+FROM python:3.11-slim-bookworm
 
+# Set environment variables
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    ffmpeg \
+    git \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set working directory
 WORKDIR /app
 
-# Install Python dependencies first (cached layer)
-COPY pyproject.toml README.md LICENSE ./
-RUN mkdir -p nanobot bridge && touch nanobot/__init__.py && \
-    uv pip install --system --no-cache . && \
-    rm -rf nanobot bridge
+# Copy requirements first (for layer caching)
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the full source and install
-COPY nanobot/ nanobot/
-COPY bridge/ bridge/
-COPY ui/ ui/
-COPY start.sh /app/start.sh
-RUN uv pip install --system --no-cache .
+# Copy application code
+COPY . /app/
 
-RUN chmod +x /app/start.sh
+# Create data directory for persistent storage
+RUN mkdir -p /data/nanobot
 
-# Build the WhatsApp bridge
-WORKDIR /app/bridge
-RUN npm install && npm run build
+# Create startup script
+RUN echo '#!/bin/bash\n\
+cd /app\n\
+exec python -u nanobot_gateway.py' > /app/start.sh && chmod +x /app/start.sh
 
-# Build the web UI
-WORKDIR /app/ui
-RUN npm install && npm run build
-WORKDIR /app
+# Set up non-root user for security
+RUN useradd -m -u 1000 nanobot && \
+    chown -R nanobot:nanobot /data /app
 
-# Create config directory
-RUN mkdir -p /root/.nanobot
+# Switch to non-root user
+USER nanobot
 
-# Gateway default port
+# Set home directory for config
+ENV HOME=/data
+ENV NANOBOT_DATA_DIR=/data/nanobot
+
+# Expose the gateway port
 EXPOSE 18790
 
-ENTRYPOINT ["nanobot"]
-CMD ["status"]
+# Default command
+CMD ["/app/start.sh"]

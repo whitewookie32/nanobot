@@ -1,24 +1,79 @@
-__pycache__
-*.pyc
-*.pyo
-*.pyd
-*.egg-info
-dist/
-build/
+# Docker ignore for nanobot
+# Prevents unnecessary files from being included in the Docker image
+
+# Git
 .git
 .gitignore
-.env
-.env.*
-.assets
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE
 .vscode/
 .idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
 *.log
-*.sqlite
+logs/
+
+# Local data (will use volume mount instead)
+/data/
 *.db
-node_modules/
-bridge/dist/
-bridge/node_modules/
-workspace/
-case/
-nanobot_arch.png
-nanobot_logo.png
+*.sqlite
+
+# Test files
+test_*.py
+*_test.py
+tests/
+.pytest_cache/
+
+# Documentation
+*.md
+!README.md
+docs/
+
+# Config files (will be set via secrets)
+.env
+.env.local
+.railway_env
+
+# Misc
+*.tmp
+*.bak
+*.backup
+docker-compose*.yml
+.github/
