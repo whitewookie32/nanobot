@@ -5,6 +5,10 @@
 .git
 .gitignore
 
+# Bridge UI - needed for pyproject.toml force-include
+!bridge/
+!bridge/**
+
 # Python
 __pycache__
 *.py[cod]
