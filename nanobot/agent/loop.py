@@ -70,7 +70,67 @@ class AgentLoop:
         
         self._running = False
         self._register_default_tools()
-    
+
+    def _set_tool_contexts(self, channel: str, chat_id: str) -> None:
+        """Update tool contexts for message routing."""
+        message_tool = self.tools.get("message")
+        if isinstance(message_tool, MessageTool):
+            message_tool.set_context(channel, chat_id)
+
+        spawn_tool = self.tools.get("spawn")
+        if isinstance(spawn_tool, SpawnTool):
+            spawn_tool.set_context(channel, chat_id)
+
+        cron_tool = self.tools.get("cron")
+        if isinstance(cron_tool, CronTool):
+            cron_tool.set_context(channel, chat_id)
+
+    async def _run_llm_loop(self, messages: list[dict[str, Any]], fallback: str) -> str:
+        """Run the tool-enabled LLM loop and return the final response."""
+        iteration = 0
+        final_content = None
+
+        while iteration < self.max_iterations:
+            iteration += 1
+
+            response = await self.provider.chat(
+                messages=messages,
+                tools=self.tools.get_definitions(),
+                model=self.model
+            )
+
+            if response.has_tool_calls:
+                tool_call_dicts = [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.name,
+                            "arguments": json.dumps(tc.arguments)
+                        }
+                    }
+                    for tc in response.tool_calls
+                ]
+                messages = self.context.add_assistant_message(
+                    messages, response.content, tool_call_dicts
+                )
+
+                for tool_call in response.tool_calls:
+                    args_str = json.dumps(tool_call.arguments)
+                    logger.debug(f"Executing tool: {tool_call.name} with arguments: {args_str}")
+                    result = await self.tools.execute(tool_call.name, tool_call.arguments)
+                    messages = self.context.add_tool_result(
+                        messages, tool_call.id, tool_call.name, result
+                    )
+            else:
+                final_content = response.content
+                break
+
+        if final_content is None:
+            final_content = fallback
+
+        return final_content
+
     def _register_default_tools(self) -> None:
         """Register the default set of tools."""
         # File tools
@@ -157,19 +217,9 @@ class AgentLoop:
         
         # Get or create session
         session = self.sessions.get_or_create(msg.session_key)
-        
+
         # Update tool contexts
-        message_tool = self.tools.get("message")
-        if isinstance(message_tool, MessageTool):
-            message_tool.set_context(msg.channel, msg.chat_id)
-        
-        spawn_tool = self.tools.get("spawn")
-        if isinstance(spawn_tool, SpawnTool):
-            spawn_tool.set_context(msg.channel, msg.chat_id)
-        
-        cron_tool = self.tools.get("cron")
-        if isinstance(cron_tool, CronTool):
-            cron_tool.set_context(msg.channel, msg.chat_id)
+        self._set_tool_contexts(msg.channel, msg.chat_id)
         
         # Build initial messages (use get_history for LLM-formatted messages)
         messages = self.context.build_messages(
@@ -180,53 +230,10 @@ class AgentLoop:
             chat_id=msg.chat_id,
         )
         
-        # Agent loop
-        iteration = 0
-        final_content = None
-        
-        while iteration < self.max_iterations:
-            iteration += 1
-            
-            # Call LLM
-            response = await self.provider.chat(
-                messages=messages,
-                tools=self.tools.get_definitions(),
-                model=self.model
-            )
-            
-            # Handle tool calls
-            if response.has_tool_calls:
-                # Add assistant message with tool calls
-                tool_call_dicts = [
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.name,
-                            "arguments": json.dumps(tc.arguments)  # Must be JSON string
-                        }
-                    }
-                    for tc in response.tool_calls
-                ]
-                messages = self.context.add_assistant_message(
-                    messages, response.content, tool_call_dicts
-                )
-                
-                # Execute tools
-                for tool_call in response.tool_calls:
-                    args_str = json.dumps(tool_call.arguments)
-                    logger.debug(f"Executing tool: {tool_call.name} with arguments: {args_str}")
-                    result = await self.tools.execute(tool_call.name, tool_call.arguments)
-                    messages = self.context.add_tool_result(
-                        messages, tool_call.id, tool_call.name, result
-                    )
-            else:
-                # No tool calls, we're done
-                final_content = response.content
-                break
-        
-        if final_content is None:
-            final_content = "I've completed processing but have no response to give."
+        final_content = await self._run_llm_loop(
+            messages,
+            fallback="I've completed processing but have no response to give."
+        )
         
         # Save to session
         session.add_message("user", msg.content)
@@ -263,17 +270,7 @@ class AgentLoop:
         session = self.sessions.get_or_create(session_key)
         
         # Update tool contexts
-        message_tool = self.tools.get("message")
-        if isinstance(message_tool, MessageTool):
-            message_tool.set_context(origin_channel, origin_chat_id)
-        
-        spawn_tool = self.tools.get("spawn")
-        if isinstance(spawn_tool, SpawnTool):
-            spawn_tool.set_context(origin_channel, origin_chat_id)
-        
-        cron_tool = self.tools.get("cron")
-        if isinstance(cron_tool, CronTool):
-            cron_tool.set_context(origin_channel, origin_chat_id)
+        self._set_tool_contexts(origin_channel, origin_chat_id)
         
         # Build messages with the announce content
         messages = self.context.build_messages(
@@ -283,48 +280,10 @@ class AgentLoop:
             chat_id=origin_chat_id,
         )
         
-        # Agent loop (limited for announce handling)
-        iteration = 0
-        final_content = None
-        
-        while iteration < self.max_iterations:
-            iteration += 1
-            
-            response = await self.provider.chat(
-                messages=messages,
-                tools=self.tools.get_definitions(),
-                model=self.model
-            )
-            
-            if response.has_tool_calls:
-                tool_call_dicts = [
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.name,
-                            "arguments": json.dumps(tc.arguments)
-                        }
-                    }
-                    for tc in response.tool_calls
-                ]
-                messages = self.context.add_assistant_message(
-                    messages, response.content, tool_call_dicts
-                )
-                
-                for tool_call in response.tool_calls:
-                    args_str = json.dumps(tool_call.arguments)
-                    logger.debug(f"Executing tool: {tool_call.name} with arguments: {args_str}")
-                    result = await self.tools.execute(tool_call.name, tool_call.arguments)
-                    messages = self.context.add_tool_result(
-                        messages, tool_call.id, tool_call.name, result
-                    )
-            else:
-                final_content = response.content
-                break
-        
-        if final_content is None:
-            final_content = "Background task completed."
+        final_content = await self._run_llm_loop(
+            messages,
+            fallback="Background task completed."
+        )
         
         # Save to session (mark as system message in history)
         session.add_message("user", f"[System: {msg.sender_id}] {msg.content}")

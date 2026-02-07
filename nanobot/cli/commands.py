@@ -18,6 +18,52 @@ app = typer.Typer(
 console = Console()
 
 
+def _resolve_provider_config(config):
+    api_key = config.get_api_key()
+    api_base = config.get_api_base()
+    model = config.agents.defaults.model
+    is_bedrock = model.startswith("bedrock/")
+    return api_key, api_base, model, is_bedrock
+
+
+def _build_provider(config):
+    from nanobot.providers.litellm_provider import LiteLLMProvider
+
+    api_key, api_base, model, _ = _resolve_provider_config(config)
+    provider = LiteLLMProvider(
+        api_key=api_key,
+        api_base=api_base,
+        default_model=model,
+        litellm_settings=getattr(config, "litellm_settings", None),
+    )
+    return provider
+
+
+def _build_agent_loop(
+    config,
+    bus,
+    provider,
+    *,
+    max_iterations: int | None = None,
+    cron_service=None,
+):
+    from nanobot.agent.loop import AgentLoop
+
+    kwargs = {
+        "bus": bus,
+        "provider": provider,
+        "workspace": config.workspace_path,
+        "model": config.agents.defaults.model,
+        "brave_api_key": config.tools.web.search.api_key or None,
+        "exec_config": config.tools.exec,
+    }
+    if max_iterations is not None:
+        kwargs["max_iterations"] = max_iterations
+    if cron_service is not None:
+        kwargs["cron_service"] = cron_service
+    return AgentLoop(**kwargs)
+
+
 def version_callback(value: bool):
     if value:
         console.print(f"{__logo__} nanobot v{__version__}")
@@ -179,8 +225,6 @@ def gateway(
     )
     from nanobot.config.schema import Config
     from nanobot.bus.queue import MessageBus
-    from nanobot.providers.litellm_provider import LiteLLMProvider
-    from nanobot.agent.loop import AgentLoop
     from nanobot.channels.manager import ChannelManager
     from nanobot.cron.service import CronService
     from nanobot.cron.types import CronJob
@@ -760,10 +804,7 @@ def gateway(
     bus = MessageBus()
     
     # Create provider (supports OpenRouter, Anthropic, OpenAI, Bedrock)
-    api_key = config.get_api_key()
-    api_base = config.get_api_base()
-    model = config.agents.defaults.model
-    is_bedrock = model.startswith("bedrock/")
+    api_key, _api_base, _model, is_bedrock = _resolve_provider_config(config)
     
     if not api_key and not is_bedrock:
         console.print("[yellow]Warning: No API key configured. Web UI is available for setup.[/yellow]")
@@ -783,26 +824,18 @@ def gateway(
         asyncio.run(run_without_agent())
         return
     
-    provider = LiteLLMProvider(
-        api_key=api_key,
-        api_base=api_base,
-        default_model=config.agents.defaults.model,
-        litellm_settings=getattr(config, "litellm_settings", None),
-    )
+    provider = _build_provider(config)
     
     # Create cron service first (callback set after agent creation)
     cron_store_path = get_data_dir() / "cron" / "jobs.json"
     cron = CronService(cron_store_path)
     
     # Create agent with cron service
-    agent = AgentLoop(
-        bus=bus,
-        provider=provider,
-        workspace=config.workspace_path,
-        model=config.agents.defaults.model,
+    agent = _build_agent_loop(
+        config,
+        bus,
+        provider,
         max_iterations=config.agents.defaults.max_tool_iterations,
-        brave_api_key=config.tools.web.search.api_key or None,
-        exec_config=config.tools.exec,
         cron_service=cron,
     )
     
@@ -888,35 +921,19 @@ def agent(
     """Interact with the agent directly."""
     from nanobot.config.loader import load_config
     from nanobot.bus.queue import MessageBus
-    from nanobot.providers.litellm_provider import LiteLLMProvider
-    from nanobot.agent.loop import AgentLoop
     
     config = load_config()
     
-    api_key = config.get_api_key()
-    api_base = config.get_api_base()
-    model = config.agents.defaults.model
-    is_bedrock = model.startswith("bedrock/")
+    api_key, _api_base, _model, is_bedrock = _resolve_provider_config(config)
 
     if not api_key and not is_bedrock:
         console.print("[red]Error: No API key configured.[/red]")
         raise typer.Exit(1)
 
     bus = MessageBus()
-    provider = LiteLLMProvider(
-        api_key=api_key,
-        api_base=api_base,
-        default_model=config.agents.defaults.model,
-        litellm_settings=getattr(config, "litellm_settings", None),
-    )
+    provider = _build_provider(config)
     
-    agent_loop = AgentLoop(
-        bus=bus,
-        provider=provider,
-        workspace=config.workspace_path,
-        brave_api_key=config.tools.web.search.api_key or None,
-        exec_config=config.tools.exec,
-    )
+    agent_loop = _build_agent_loop(config, bus, provider)
     
     if message:
         # Single message mode
