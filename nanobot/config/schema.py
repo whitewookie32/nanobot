@@ -30,10 +30,20 @@ class FeishuConfig(BaseModel):
     allow_from: list[str] = Field(default_factory=list)  # Allowed user open_ids
 
 
+class DiscordConfig(BaseModel):
+    """Discord channel configuration."""
+    enabled: bool = False
+    token: str = ""  # Bot token from Discord Developer Portal
+    allow_from: list[str] = Field(default_factory=list)  # Allowed user IDs
+    gateway_url: str = "wss://gateway.discord.gg/?v=10&encoding=json"
+    intents: int = 37377  # GUILDS + GUILD_MESSAGES + DIRECT_MESSAGES + MESSAGE_CONTENT
+
+
 class ChannelsConfig(BaseModel):
     """Configuration for chat channels."""
     whatsapp: WhatsAppConfig = Field(default_factory=WhatsAppConfig)
     telegram: TelegramConfig = Field(default_factory=TelegramConfig)
+    discord: DiscordConfig = Field(default_factory=DiscordConfig)
     feishu: FeishuConfig = Field(default_factory=FeishuConfig)
 
 
@@ -66,6 +76,8 @@ class ProvidersConfig(BaseModel):
     deepseek: ProviderConfig = Field(default_factory=ProviderConfig)
     groq: ProviderConfig = Field(default_factory=ProviderConfig)
     zhipu: ProviderConfig = Field(default_factory=ProviderConfig)
+    dashscope: ProviderConfig = Field(default_factory=ProviderConfig)
+    moonshot: ProviderConfig = Field(default_factory=ProviderConfig)
     vllm: ProviderConfig = Field(default_factory=ProviderConfig)
     gemini: ProviderConfig = Field(default_factory=ProviderConfig)
 
@@ -118,30 +130,65 @@ class Config(BaseSettings):
     def workspace_path(self) -> Path:
         """Get expanded workspace path."""
         return Path(self.agents.defaults.workspace).expanduser()
-    
-    def get_api_key(self) -> str | None:
-        """Get API key in priority order: OpenRouter > DeepSeek > Anthropic > OpenAI > Gemini > Zhipu > Groq > vLLM > Together."""
-        return (
-            self.providers.openrouter.api_key or
-            self.providers.deepseek.api_key or
-            self.providers.anthropic.api_key or
-            self.providers.openai.api_key or
-            self.providers.gemini.api_key or
-            self.providers.zhipu.api_key or
-            self.providers.groq.api_key or
-            self.providers.vllm.api_key or
-            self.providers.together.api_key or
-            None
-        )
-    
-    def get_api_base(self) -> str | None:
-        """Get API base URL if using OpenRouter, Zhipu or vLLM."""
-        if self.providers.openrouter.api_key:
-            return self.providers.openrouter.api_base or "https://openrouter.ai/api/v1"
-        if self.providers.together.api_key:
-            return self.providers.together.api_base or "https://api.together.xyz/v1"
-        if self.providers.zhipu.api_key:
-            return self.providers.zhipu.api_base
+
+    def get_provider(self, model: str | None = None) -> ProviderConfig | None:
+        """Get matched provider config (api_key, api_base). Falls back to first available."""
+        model_lower = (model or self.agents.defaults.model).lower()
+        p = self.providers
+        keyword_map = {
+            "openrouter": p.openrouter,
+            "together": p.together,
+            "deepseek": p.deepseek,
+            "anthropic": p.anthropic,
+            "claude": p.anthropic,
+            "openai": p.openai,
+            "gpt": p.openai,
+            "gemini": p.gemini,
+            "zhipu": p.zhipu,
+            "glm": p.zhipu,
+            "zai": p.zhipu,
+            "dashscope": p.dashscope,
+            "qwen": p.dashscope,
+            "moonshot": p.moonshot,
+            "kimi": p.moonshot,
+            "groq": p.groq,
+            "vllm": p.vllm,
+        }
+        for kw, provider in keyword_map.items():
+            if kw in model_lower and provider.api_key:
+                return provider
+
+        all_providers = [
+            p.openrouter,
+            p.together,
+            p.deepseek,
+            p.anthropic,
+            p.openai,
+            p.gemini,
+            p.zhipu,
+            p.dashscope,
+            p.moonshot,
+            p.vllm,
+            p.groq,
+        ]
+        return next((provider for provider in all_providers if provider.api_key), None)
+
+    def get_api_key(self, model: str | None = None) -> str | None:
+        """Get API key for model. Falls back to first available key."""
+        provider = self.get_provider(model)
+        return provider.api_key if provider else None
+
+    def get_api_base(self, model: str | None = None) -> str | None:
+        """Get API base URL for model."""
+        provider = self.get_provider(model)
+        if provider and provider.api_base:
+            return provider.api_base
+        if provider is self.providers.openrouter:
+            return "https://openrouter.ai/api/v1"
+        if provider is self.providers.together:
+            return "https://api.together.xyz/v1"
+        if provider is self.providers.moonshot:
+            return "https://api.moonshot.cn/v1"
         if self.providers.vllm.api_base:
             return self.providers.vllm.api_base
         return None

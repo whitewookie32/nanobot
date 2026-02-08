@@ -84,6 +84,11 @@ class LiteLLMProvider(LLMProvider):
                 os.environ.setdefault("GEMINI_API_KEY", api_key)
             elif "zhipu" in default_model or "glm" in default_model or "zai" in default_model:
                 os.environ.setdefault("ZHIPUAI_API_KEY", api_key)
+            elif "dashscope" in default_model or "qwen" in default_model.lower():
+                os.environ.setdefault("DASHSCOPE_API_KEY", api_key)
+            elif "moonshot" in default_model or "kimi" in default_model.lower():
+                os.environ.setdefault("MOONSHOT_API_KEY", api_key)
+                os.environ.setdefault("MOONSHOT_API_BASE", api_base or "https://api.moonshot.cn/v1")
             elif "groq" in default_model:
                 os.environ.setdefault("GROQ_API_KEY", api_key)
         
@@ -126,18 +131,25 @@ class LiteLLMProvider(LLMProvider):
         """
         model = model or self.default_model
         
-        # For OpenRouter, prefix model name if not already prefixed
+        # Auto-prefix model names for known providers.
+        if not (self.is_vllm or self.is_openrouter or self.is_together):
+            model_lower = model.lower()
+            prefix_rules = [
+                (("glm", "zhipu"), "zai", ("zhipu/", "zai/", "openrouter/", "hosted_vllm/")),
+                (("qwen", "dashscope"), "dashscope", ("dashscope/", "openrouter/")),
+                (("moonshot", "kimi"), "moonshot", ("moonshot/", "openrouter/")),
+                (("gemini",), "gemini", ("gemini/",)),
+            ]
+            for keywords, prefix, skip_prefixes in prefix_rules:
+                if any(keyword in model_lower for keyword in keywords) and not any(
+                    model.startswith(skip) for skip in skip_prefixes
+                ):
+                    model = f"{prefix}/{model}"
+                    break
+
+        # For OpenRouter, prefix model name if not already prefixed.
         if self.is_openrouter and not model.startswith("openrouter/"):
             model = f"openrouter/{model}"
-        
-        # For Zhipu/Z.ai, ensure prefix is present
-        # Handle cases like "glm-4.7-flash" -> "zai/glm-4.7-flash"
-        if ("glm" in model.lower() or "zhipu" in model.lower()) and not (
-            model.startswith("zhipu/") or 
-            model.startswith("zai/") or 
-            model.startswith("openrouter/")
-        ):
-            model = f"zai/{model}"
         
         # For Together AI, ensure together_ai/ prefix if not already present
         if self.is_together and not model.startswith("together_ai/"):
@@ -160,9 +172,13 @@ class LiteLLMProvider(LLMProvider):
         if self.is_vllm:
             model = f"hosted_vllm/{model}"
         
-        # For Gemini, ensure gemini/ prefix if not already present
+        # For Gemini, ensure gemini/ prefix if not already present.
         if "gemini" in model.lower() and not model.startswith("gemini/"):
             model = f"gemini/{model}"
+
+        # kimi-k2.5 only supports temperature=1.0
+        if "kimi-k2.5" in model.lower():
+            temperature = 1.0
         
         kwargs: dict[str, Any] = {
             "model": model,

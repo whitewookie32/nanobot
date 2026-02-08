@@ -55,7 +55,9 @@ if [[ -d "/Nano" ]]; then
 fi
 
 # Create config.json from environment variables (basic example).
-# Set these env vars in Railway: TOGETHER_API_KEY (or TOGETHERAI_API_KEY), OPENROUTER_API_KEY, TELEGRAM_TOKEN, TELEGRAM_ALLOW_FROM (comma-separated), MODEL
+# Set these env vars in Railway: TOGETHER_API_KEY (or TOGETHERAI_API_KEY), OPENROUTER_API_KEY,
+# MOONSHOT_API_KEY, DASHSCOPE_API_KEY, TELEGRAM_TOKEN, TELEGRAM_ALLOW_FROM (comma-separated),
+# DISCORD_TOKEN, DISCORD_ALLOW_FROM (comma-separated), MODEL
 WRITE_CONFIG="${NANOBOT_WRITE_CONFIG:-auto}"
 should_write=0
 if [[ "$WRITE_CONFIG" == "1" || "$WRITE_CONFIG" == "true" || "$WRITE_CONFIG" == "yes" ]]; then
@@ -74,6 +76,15 @@ items = [item.strip() for item in raw.split(",") if item.strip()]
 print(json.dumps(items))
 PY
 )
+  DISCORD_ALLOW_FROM_JSON=$(python - <<'PY'
+import json
+import os
+
+raw = os.getenv("DISCORD_ALLOW_FROM", "")
+items = [item.strip() for item in raw.split(",") if item.strip()]
+print(json.dumps(items))
+PY
+)
   TOGETHER_KEY="${TOGETHER_API_KEY:-${TOGETHERAI_API_KEY:-}}"
   TOGETHER_BASE="${TOGETHER_API_BASE:-}"
   cat > "$CONFIG_FILE" <<EOF
@@ -85,6 +96,13 @@ PY
   "providers": {
     "openrouter": {
       "apiKey": "${OPENROUTER_API_KEY:-}"
+    },
+    "dashscope": {
+      "apiKey": "${DASHSCOPE_API_KEY:-}"
+    },
+    "moonshot": {
+      "apiKey": "${MOONSHOT_API_KEY:-}",
+      "apiBase": "${MOONSHOT_API_BASE:-}"
     },
     "together": {
       "apiKey": "${TOGETHER_KEY}",
@@ -105,6 +123,11 @@ PY
     },
     "whatsapp": {
       "enabled": ${WHATSAPP_ENABLED:-false}
+    },
+    "discord": {
+      "enabled": ${DISCORD_ENABLED:-false},
+      "token": "${DISCORD_TOKEN:-}",
+      "allowFrom": ${DISCORD_ALLOW_FROM_JSON}
     }
   },
   "tools": {
