@@ -23,11 +23,13 @@ class LiteLLMProvider(LLMProvider):
         api_base: str | None = None,
         default_model: str = "anthropic/claude-opus-4-5",
         litellm_settings: Any | None = None,
+        extra_headers: dict[str, str] | None = None,
     ):
         super().__init__(api_key, api_base)
         self.default_model = default_model
         self.allowed_openai_params: list[str] = []
         self.drop_params: bool | None = None
+        self.extra_headers = extra_headers or {}
         
         # Detect OpenRouter by api_key prefix or explicit api_base
         self.is_openrouter = (
@@ -40,9 +42,12 @@ class LiteLLMProvider(LLMProvider):
             (api_base and "together" in api_base) or
             default_model.startswith("together_ai/")
         )
+
+        # Detect AiHubMix by api_base
+        self.is_aihubmix = bool(api_base and "aihubmix" in api_base)
         
         # Track if using custom endpoint (vLLM, etc.)
-        self.is_vllm = bool(api_base) and not self.is_openrouter and not self.is_together
+        self.is_vllm = bool(api_base) and not self.is_openrouter and not self.is_together and not self.is_aihubmix
 
         # Load LiteLLM settings (optional)
         def _get_setting(name: str, default: Any) -> Any:
@@ -67,6 +72,9 @@ class LiteLLMProvider(LLMProvider):
             if self.is_openrouter:
                 # OpenRouter mode - set key
                 os.environ["OPENROUTER_API_KEY"] = api_key
+            elif self.is_aihubmix:
+                # AiHubMix gateway - OpenAI-compatible
+                os.environ["OPENAI_API_KEY"] = api_key
             elif self.is_together:
                 # Together AI mode
                 os.environ.setdefault("TOGETHERAI_API_KEY", api_key)
@@ -150,6 +158,8 @@ class LiteLLMProvider(LLMProvider):
         # For OpenRouter, prefix model name if not already prefixed.
         if self.is_openrouter and not model.startswith("openrouter/"):
             model = f"openrouter/{model}"
+        elif self.is_aihubmix:
+            model = f"openai/{model.split('/')[-1]}"
         
         # For Together AI, ensure together_ai/ prefix if not already present
         if self.is_together and not model.startswith("together_ai/"):
@@ -190,6 +200,9 @@ class LiteLLMProvider(LLMProvider):
         # Pass api_base directly for custom endpoints (vLLM, etc.)
         if self.api_base:
             kwargs["api_base"] = self.api_base
+
+        if self.extra_headers:
+            kwargs["extra_headers"] = self.extra_headers
         
         if tools:
             kwargs["tools"] = tools

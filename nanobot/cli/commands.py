@@ -30,11 +30,13 @@ def _build_provider(config):
     from nanobot.providers.litellm_provider import LiteLLMProvider
 
     api_key, api_base, model, _ = _resolve_provider_config(config)
+    provider_cfg = config.get_provider(model)
     provider = LiteLLMProvider(
         api_key=api_key,
         api_base=api_base,
         default_model=model,
         litellm_settings=getattr(config, "litellm_settings", None),
+        extra_headers=(provider_cfg.extra_headers if provider_cfg else None),
     )
     return provider
 

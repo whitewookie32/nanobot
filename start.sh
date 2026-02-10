@@ -56,8 +56,8 @@ fi
 
 # Create config.json from environment variables (basic example).
 # Set these env vars in Railway: TOGETHER_API_KEY (or TOGETHERAI_API_KEY), OPENROUTER_API_KEY,
-# MOONSHOT_API_KEY, DASHSCOPE_API_KEY, TELEGRAM_TOKEN, TELEGRAM_ALLOW_FROM (comma-separated),
-# DISCORD_TOKEN, DISCORD_ALLOW_FROM (comma-separated), MODEL
+# AIHUBMIX_API_KEY, MOONSHOT_API_KEY, DASHSCOPE_API_KEY, TELEGRAM_TOKEN,
+# TELEGRAM_ALLOW_FROM (comma-separated), DISCORD_TOKEN, DISCORD_ALLOW_FROM (comma-separated), MODEL
 WRITE_CONFIG="${NANOBOT_WRITE_CONFIG:-auto}"
 should_write=0
 if [[ "$WRITE_CONFIG" == "1" || "$WRITE_CONFIG" == "true" || "$WRITE_CONFIG" == "yes" ]]; then
@@ -99,6 +99,13 @@ PY
     },
     "dashscope": {
       "apiKey": "${DASHSCOPE_API_KEY:-}"
+    },
+    "aihubmix": {
+      "apiKey": "${AIHUBMIX_API_KEY:-}",
+      "apiBase": "${AIHUBMIX_API_BASE:-}",
+      "extraHeaders": {
+        "APP-Code": "${AIHUBMIX_APP_CODE:-}"
+      }
     },
     "moonshot": {
       "apiKey": "${MOONSHOT_API_KEY:-}",

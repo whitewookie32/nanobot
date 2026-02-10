@@ -65,6 +65,7 @@ class ProviderConfig(BaseModel):
     """LLM provider configuration."""
     api_key: str = ""
     api_base: str | None = None
+    extra_headers: dict[str, str] | None = None
 
 
 class ProvidersConfig(BaseModel):
@@ -80,6 +81,7 @@ class ProvidersConfig(BaseModel):
     moonshot: ProviderConfig = Field(default_factory=ProviderConfig)
     vllm: ProviderConfig = Field(default_factory=ProviderConfig)
     gemini: ProviderConfig = Field(default_factory=ProviderConfig)
+    aihubmix: ProviderConfig = Field(default_factory=ProviderConfig)
 
 
 class LiteLLMSettings(BaseModel):
@@ -125,6 +127,12 @@ class Config(BaseSettings):
     litellm_settings: LiteLLMSettings = Field(default_factory=LiteLLMSettings)
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    _GATEWAY_DEFAULTS = {
+        "openrouter": "https://openrouter.ai/api/v1",
+        "together": "https://api.together.xyz/v1",
+        "moonshot": "https://api.moonshot.cn/v1",
+        "aihubmix": "https://aihubmix.com/v1",
+    }
     
     @property
     def workspace_path(self) -> Path:
@@ -136,6 +144,7 @@ class Config(BaseSettings):
         model_lower = (model or self.agents.defaults.model).lower()
         p = self.providers
         keyword_map = {
+            "aihubmix": p.aihubmix,
             "openrouter": p.openrouter,
             "together": p.together,
             "deepseek": p.deepseek,
@@ -160,6 +169,7 @@ class Config(BaseSettings):
 
         all_providers = [
             p.openrouter,
+            p.aihubmix,
             p.together,
             p.deepseek,
             p.anthropic,
@@ -183,12 +193,9 @@ class Config(BaseSettings):
         provider = self.get_provider(model)
         if provider and provider.api_base:
             return provider.api_base
-        if provider is self.providers.openrouter:
-            return "https://openrouter.ai/api/v1"
-        if provider is self.providers.together:
-            return "https://api.together.xyz/v1"
-        if provider is self.providers.moonshot:
-            return "https://api.moonshot.cn/v1"
+        for name, default_url in self._GATEWAY_DEFAULTS.items():
+            if provider is getattr(self.providers, name):
+                return default_url
         if self.providers.vllm.api_base:
             return self.providers.vllm.api_base
         return None
