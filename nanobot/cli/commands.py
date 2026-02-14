@@ -713,6 +713,12 @@ def gateway(
                 if path in ("/health", "/healthz", "/ready"):
                     self._send_text("ok", 200)
                     return
+                # Omi bridge health check
+                if path == "/tools/ask/health":
+                    from nanobot.bridge.omi_handler import check_health
+                    result = check_health()
+                    self._send_json(json.dumps(result), 200)
+                    return
                 if path.startswith("/app"):
                     if self._serve_app(path):
                         return
@@ -735,6 +741,29 @@ def gateway(
 
             def do_POST(self) -> None:  # noqa: N802 - required by BaseHTTPRequestHandler
                 path = urlparse(self.path).path
+                # Omi bridge endpoint
+                if path == "/tools/ask":
+                    try:
+                        body = self._read_body()
+                        data = json.loads(body) if body else {}
+                        request_text = data.get("request", "")
+                        uid = data.get("uid", "")
+                        callback_url = data.get("callback_url")
+                        
+                        # Verify token
+                        from nanobot.bridge.omi_handler import verify_token, process_omi_request
+                        token = self.headers.get("X-Omi-Token", "")
+                        if not verify_token(token):
+                            self._send_json(json.dumps({"status": "error", "message": "Invalid token"}), 401)
+                            return
+                        
+                        # Process request (async)
+                        import asyncio
+                        result = asyncio.run(process_omi_request(request_text, uid, callback_url))
+                        self._send_json(json.dumps(result), 200)
+                    except Exception as exc:
+                        self._send_json(json.dumps({"status": "error", "message": str(exc)}), 500)
+                    return
                 if path == "/api/codex/login":
                     result = _codex_login_start()
                     status = 200 if result.get("ok") else 400
